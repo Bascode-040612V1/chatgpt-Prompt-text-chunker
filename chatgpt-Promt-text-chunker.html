@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatGPT Text Chunker</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body {
+  margin: 24px;
+  line-height: 1.4;
+  background: linear-gradient(135deg, #1e3c72, #2a5298, #00c6ff, #7ddaff);
+  min-height: 100vh;
+  color: #fff; /* optional: makes text more readable */
+}
+
+    h1 { font-size: 1.25rem; margin: 0 0 8px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    textarea {
+  width: 100%;
+  background-image: url('bg.jpg');      /* your image file */
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  background-attachment: fixed;         /* window / fixed effect */
+  background-color: transparent;        /* remove white background */
+  color: #fff;                          /* text visible */
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  resize: vertical;                     /* only vertical resizing */
+  font-family: inherit;
+  font-size: 1rem;
+  line-height: 1.4;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+}
+
+    .btn { padding: 8px 12px; border: 1px solid #ccc; border-radius: 10px; cursor: pointer; background: #f6f6f6; }
+    .btn:hover { background: #eee; }
+    .chunk { margin: 12px 0; }
+    .chunk textarea { min-height: 140px; }
+.muted { color: #fff; font-size: 0.9em; opacity: 0.85; }
+
+    .row label { display: inline-flex; align-items: center; gap: 8px; }
+    .counter { margin-left: auto; }
+.chunk.copied {
+  opacity: 0.5;          /* faded look for copied chunks */
+  transition: opacity 0.5s;
+}
+.chunk {
+  margin: 12px 0;
+  transition: opacity 0.5s, transform 0.5s, height 0.5s;
+}
+
+.chunk.removed {
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+
+  </style>
+</head>
+<body>
+  <h1>ChatGPT Text Chunker</h1>
+  <p class="muted">Paste your long text below. Click “Split” to produce safe-sized chunks (default 11,800 characters, labeled <code>[Part i/N]</code>).</p>
+
+  <textarea id="source" placeholder="Paste your long text here..."></textarea>
+
+  <div class="row">
+    <label>Max characters per chunk:
+      <input id="maxChars" type="number" value="11800" min="1000" step="100">
+    </label>
+    <label><input id="labelParts" type="checkbox" checked> Label chunks as [Part i/N]</label>
+    <button class="btn" id="splitBtn">Split</button>
+    <span class="counter" id="charCount">0 characters</span>
+  </div>
+
+  <div id="output"></div>
+
+<script>
+(function(){
+  const src = document.getElementById('source');
+  const out = document.getElementById('output');
+  const splitBtn = document.getElementById('splitBtn');
+  const maxCharsEl = document.getElementById('maxChars');
+  const labelPartsEl = document.getElementById('labelParts');
+  const charCount = document.getElementById('charCount');
+
+  function countChars(){
+    charCount.textContent = (src.value || '').length + ' characters';
+  }
+  src.addEventListener('input', countChars);
+  countChars();
+
+  function sentenceSplit(p){
+    // Split by sentence-ish boundaries
+    return p.split(/(?<=[.!?…])\s+/);
+  }
+
+  function smartChunks(text, maxChars){
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    if (!text) return [];
+    const paragraphs = text.split(/\n{2,}/);
+    const sep = '\n\n';
+    const chunks = [];
+    let buf = '';
+
+    function flush(){
+      if (buf) { chunks.push(buf.trimEnd()); buf = ''; }
+    }
+
+    for (let p of paragraphs){
+      p = p.trim();
+      if (!p) continue;
+      if (p.length > maxChars){
+        // paragraph too long: split by sentences
+        const sentences = sentenceSplit(p);
+        let cur = '';
+        for (const s of sentences){
+          if (!s) continue;
+          if (cur && (cur.length + 1 + s.length) > maxChars){
+            chunks.push(cur.trimEnd());
+            cur = s;
+          } else {
+            cur = cur ? (cur + ' ' + s) : s;
+          }
+        }
+        if (cur) chunks.push(cur.trimEnd());
+        continue;
+      }
+      if (!buf) buf = p;
+      else if ((buf.length + sep.length + p.length) <= maxChars) buf = buf + sep + p;
+      else { flush(); buf = p; }
+    }
+    flush();
+
+    // Hard-slice any overs that remain
+    const hard = [];
+    for (const c of chunks){
+      if (c.length <= maxChars) hard.push(c);
+      else {
+        for (let i=0;i<c.length;i+=maxChars){
+          hard.push(c.slice(i, i+maxChars).trimEnd());
+        }
+      }
+    }
+    return hard;
+  }
+
+  splitBtn.addEventListener('click', () => {
+    const maxChars = Math.max(1000, parseInt(maxCharsEl.value || '11800', 10));
+    const parts = smartChunks(src.value, maxChars);
+    const total = parts.length;
+    out.innerHTML = '';
+
+    if (!total){
+      out.innerHTML = '<p class="muted">Nothing to split. Paste some text above.</p>';
+      return;
+    }
+
+    parts.forEach((body, i) => {
+      const label = `[Part ${i+1}/${total}]`;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'chunk';
+
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `<strong>${label}</strong> <span class="muted">(${body.length} chars)</span>`;
+      const copyBtn = document.createElement('button');
+      copyBtn.textContent = 'Copy';
+      copyBtn.className = 'btn';
+    copyBtn.addEventListener('click', async () => {
+  const textToCopy = (labelPartsEl.checked ? (label + '\n') : '') + body;
+  try {
+    await navigator.clipboard.writeText(textToCopy);
+    copyBtn.textContent = 'Copied!';
+
+    // fade and remove current chunk
+    wrapper.classList.add('removed');
+
+    // after animation, remove from DOM and show next
+    setTimeout(() => {
+      wrapper.remove();
+    }, 500); // match CSS transition
+
+    setTimeout(() => copyBtn.textContent = 'Copy', 1200);
+  } catch(e){ alert('Copy failed: ' + e); }
+});
+
+
+      row.appendChild(copyBtn);
+      wrapper.appendChild(row);
+
+      const ta = document.createElement('textarea');
+      ta.value = (labelPartsEl.checked ? (label + '\n') : '') + body;
+      wrapper.appendChild(ta);
+
+      out.appendChild(wrapper);
+    });
+  });
+})();
+</script>
+</body>
+</html>
